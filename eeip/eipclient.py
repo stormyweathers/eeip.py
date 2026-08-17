@@ -118,6 +118,88 @@ class EEIPClient:
             self.__tcpClient_socket.close()
         self.__session_handle = 0
 
+    def send_explicit_message(self, service_code, class_id, instance_id, attribute_id, value=None):
+        """
+        Implementation of generic explicit message
+        Specification Vol. 1 Appendix A - Chapter A-4.12 - Page A-20
+        Returns the contents of response message, either requested data or error code
+        :param service_code Service code of the message
+        :param class_id Class id of message
+        :param instance_id Instance of message (0 for class Attributes)
+        :param attribute_id Attribute Id of message
+        :return: Response message recieved,
+                for Get_Attribute_Single or Get_Attribute_All, response is the requested attributes
+                otherwise is some acknowledgement or error code
+        """
+        service_code = cip.CIPCommonServices(service_code)
+
+        # initialize buffer to empty list, but dont use mutable as default
+        if value is None: value = []
+
+        requested_path = self.get_epath(class_id, instance_id, attribute_id)
+        # If the session handle is 0, try to register a session with the predefined IP-Address and Port
+        if self.__session_handle == 0:
+            self.__session_handle = self.register_session(
+                self.__ip_address, self.__tcp_port
+            )
+        __encapsulation = encapsulation.Encapsulation()
+        __encapsulation.session_handle = self.__session_handle
+        __encapsulation.command = encapsulation.CommandsEnum.SEND_RRDATA
+        __encapsulation.length = 18 + len(requested_path) + len(value)
+
+        # ---------------Interface Handle CIP
+        __encapsulation.command_specific_data.append(0)
+        __encapsulation.command_specific_data.append(0)
+        __encapsulation.command_specific_data.append(0)
+        __encapsulation.command_specific_data.append(0)
+        # ----------------Interface Handle CIP
+
+        # ----------------Timeout
+        __encapsulation.command_specific_data.append(0)
+        __encapsulation.command_specific_data.append(0)
+        # ----------------Timeout
+
+        # Common Packet Format (Table 2-6.1)
+        common_packet_format = encapsulation.CommonPacketFormat()
+
+        common_packet_format.data_length = 2 + len(requested_path) + len(value)
+
+        # ----------------CIP Service Code"
+        common_packet_format.data.append(int(service_code))
+
+        # ----------------Requested Path size (number of 16 bit words)
+        common_packet_format.data.append(int(len(requested_path) / 2) & 0xFF)
+        # ----------------Requested Path size (number of 16 bit words)
+
+        for i in requested_path:
+            common_packet_format.data.append(i)
+
+        for i in value:
+            common_packet_format.data.append(i)
+
+        data_to_write = __encapsulation.to_bytes() + common_packet_format.to_bytes()
+        self.__receivedata = bytearray()
+        self.__tcpClient_socket.send(bytearray(data_to_write))
+
+        try:
+            while len(self.__receivedata) == 0:
+                pass
+        except Exception:
+            raise Exception("Read Timeout")
+
+        # --------------------------BEGIN Error?
+        if len(self.__receivedata) > 41:
+            if (
+                self.__receivedata[42] != 0
+            ):  # Exception codes see "Table B-1.1 CIP General Status Codes"
+                raise cip.CIPException(cip.get_status_code(self.__receivedata[42]))
+        # --------------------------END Error?
+
+        returnvalue = list()
+        for i in range(len(self.__receivedata) - 44):
+            returnvalue.append(self.__receivedata[i + 44])
+
+        return returnvalue
 
     def get_attribute_single(self, class_id, instance_id, attribute_id):
         """
