@@ -63,7 +63,7 @@ class EEIPClient:
             data, addr = client.recv(1024)
             print("received message: %s" % data)
 
-    def contruct_register_session(self):
+    def construct_register_session(self):
         __encapsulation = encapsulation.Encapsulation()
         __encapsulation.command = encapsulation.CommandsEnum.REGISTER_SESSION
         __encapsulation.length = 4
@@ -83,7 +83,7 @@ class EEIPClient:
         """
         if self.__session_handle != 0:
             return self.__session_handle
-        data_to_send = self.contruct_register_session()
+        data_to_send = self.construct_register_session()
         self.ip_address = address
         #self.__ip_address = encapsulation.Encapsulation.CIPIdentityItem().get_ip_address(address)
         self.__tcpClient_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -424,7 +424,7 @@ class EEIPClient:
         common_packet_format.data.append(0x01)
         # Connection Path size
         common_packet_format.data.append(0x02 + (0 if self.__o_t_connection_type == ConnectionType.NULL else 1) + (0 if self.__t_o_connection_type == ConnectionType.NULL else 1))
-        # Verbindugspfad
+        # Connection Path
         common_packet_format.data.append(0x20)
         common_packet_format.data.append(self.__assembly_object_class)
         common_packet_format.data.append(0x24)
@@ -487,26 +487,9 @@ class EEIPClient:
                 else:
                     raise cip.CIPException(cip.get_status_code(self.__receivedata[42]))
         # --------------------------END Error?
-        item_count = self.__receivedata[30] + (self.__receivedata[31] << 8)
-        length_unconnected_data_item = self.__receivedata[38] + (self.__receivedata[39] << 8)
-        self.__connection_id_o_t = self.__receivedata[44] + (self.__receivedata[45] << 8) + (self.__receivedata[46] << 16) + (self.__receivedata[47] << 24)
-        self.__connection_id_t_o = self.__receivedata[48] + (self.__receivedata[49] << 8) + (
-                    self.__receivedata[50] << 16) + (self.__receivedata[51] << 24)
 
-        #Is there a SocketInfoItem?
-        number_of_current_item = 0
-        socket_info_item = encapsulation.SocketAddress()
-        while item_count > 2:
-            type_id = self.__receivedata[40 + length_unconnected_data_item + 20 * number_of_current_item] + (self.__receivedata[40 + length_unconnected_data_item + 21 * number_of_current_item] << 8)
-            if type_id == 0x8001:
-                socket_info_item = encapsulation.SocketAddress()
-                socket_info_item.sin_address = self.__receivedata[40 + length_unconnected_data_item + 11 + 20 * number_of_current_item] + (self.__receivedata[40 + length_unconnected_data_item + 10 + 20 * number_of_current_item] << 8) + (self.__receivedata[40 + length_unconnected_data_item + 9 + 20 * number_of_current_item] << 16) + (self.__receivedata[40 + length_unconnected_data_item + 8 + 20 * number_of_current_item] << 24)
-                socket_info_item.sin_port = self.__receivedata[40 + length_unconnected_data_item + 7 + 20 * number_of_current_item] + (self.__receivedata[40 + length_unconnected_data_item + 6 + 20 * number_of_current_item] << 8)
-                if self.__t_o_connection_type == ConnectionType.MULTICAST:
-                    self.__multicastAddress = socket_info_item.sin_address
-                self.__target_udp_port = socket_info_item.sin_port
-            number_of_current_item = number_of_current_item + 1
-            item_count = item_count - 1
+        # Process self.__recievedata to get some UDP socket params
+        self.parse_socket_info(self.__receivedata)
 
         self.__udp_server_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
         self.__udp_server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -522,6 +505,38 @@ class EEIPClient:
         self.__udp_send_thread = threading.Thread(target=self.__send_udp, args=())
         self.__udp_send_thread.daemon = True
         self.__udp_send_thread.start()
+
+    def parse_socket_info(self, buff):
+        """ parse the response message from a TCP Forward Open message 
+            to get more params for the implicit UDP connections
+            self.__connection_id_o_t
+            self.__connection_id_t_o
+            self.__t_o_connection_type
+            self.__multicastAddress
+            self.__target_udp_port
+        """
+        item_count = buff[30] + (buff[31] << 8)
+        length_unconnected_data_item =buff[38] + (buff[39] << 8)
+        self.__connection_id_o_t =buff[44] + (buff[45] << 8) + (buff[46] << 16) + (buff[47] << 24)
+        self.__connection_id_t_o =buff[48] + (buff[49] << 8) + (
+                   buff[50] << 16) + (buff[51] << 24)
+
+        #Is there a SocketInfoItem?
+        number_of_current_item = 0
+        socket_info_item = encapsulation.SocketAddress()
+        while item_count > 2:
+            type_id =buff[40 + length_unconnected_data_item + 20 * number_of_current_item] + (buff[40 + length_unconnected_data_item + 21 * number_of_current_item] << 8)
+            if type_id == 0x8001:
+                socket_info_item = encapsulation.SocketAddress()
+                socket_info_item.sin_address =buff[40 + length_unconnected_data_item + 11 + 20 * number_of_current_item] + (buff[40 + length_unconnected_data_item + 10 + 20 * number_of_current_item] << 8) + (buff[40 + length_unconnected_data_item + 9 + 20 * number_of_current_item] << 16) + (buff[40 + length_unconnected_data_item + 8 + 20 * number_of_current_item] << 24)
+                socket_info_item.sin_port =buff[40 + length_unconnected_data_item + 7 + 20 * number_of_current_item] + (buff[40 + length_unconnected_data_item + 6 + 20 * number_of_current_item] << 8)
+                if self.__t_o_connection_type == ConnectionType.MULTICAST:
+                    self.__multicastAddress = socket_info_item.sin_address
+                self.__target_udp_port = socket_info_item.sin_port
+            number_of_current_item = number_of_current_item + 1
+            item_count = item_count - 1
+        return
+
 
     def construct_forward_close(self):
         """ 
@@ -739,8 +754,8 @@ class EEIPClient:
             message.append(0)
         # -------------------write data
         #self.o_t_iodata[0] = self.o_t_iodata[0] + 1
-        for i in range(0, self.__o_t_length):
-            message.append(self.o_t_iodata[i])
+        for i in range(0, len(self.__o_t_iodata) ):
+            message.append(self.__o_t_iodata[i])
         # -------------------write data
         return message
 
@@ -1229,6 +1244,13 @@ class EEIPClient:
     def last_received_implicit_message(self, last_received_implicit_message):
         self.__last_received_implicit_message = last_received_implicit_message
 
+    @property
+    def session_handle(self):
+        return self.__session_handle
+    
+    @session_handle.setter
+    def session_handle(self,handle):
+        self.__session_handle = handle
 class ConnectionType(IntEnum):
     NULL = 0,
     MULTICAST = 1,
