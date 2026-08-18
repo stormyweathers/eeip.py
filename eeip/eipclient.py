@@ -44,9 +44,8 @@ class EEIPClient:
         self.__lock_receive_data = threading.Lock()
         self.__last_received_implicit_message = 0
         self.__tcp_port = 0xAF12
-
-
         self.__udp_client_receive_closed = False
+        return
 
     def ListIdentity(self):
         """
@@ -64,6 +63,16 @@ class EEIPClient:
             data, addr = client.recv(1024)
             print("received message: %s" % data)
 
+    def contruct_register_session(self):
+        __encapsulation = encapsulation.Encapsulation()
+        __encapsulation.command = encapsulation.CommandsEnum.REGISTER_SESSION
+        __encapsulation.length = 4
+        __encapsulation.command_specific_data.append(1)     #Protocol Version (Should be set to 1)
+        __encapsulation.command_specific_data.append(0)
+        __encapsulation.command_specific_data.append(0)     #Session option shall be set to "0"
+        __encapsulation.command_specific_data.append(0)
+        data_to_send = __encapsulation.to_bytes()
+        return data_to_send
 
     def register_session(self, address, port = 0xAF12):
         """
@@ -74,13 +83,7 @@ class EEIPClient:
         """
         if self.__session_handle != 0:
             return self.__session_handle
-        __encapsulation = encapsulation.Encapsulation()
-        __encapsulation.command = encapsulation.CommandsEnum.REGISTER_SESSION
-        __encapsulation.length = 4
-        __encapsulation.command_specific_data.append(1)     #Protocol Version (Should be set to 1)
-        __encapsulation.command_specific_data.append(0)
-        __encapsulation.command_specific_data.append(0)     #Session option shall be set to "0"
-        __encapsulation.command_specific_data.append(0)
+        data_to_send = self.contruct_register_session()
         self.ip_address = address
         #self.__ip_address = encapsulation.Encapsulation.CIPIdentityItem().get_ip_address(address)
         self.__tcpClient_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -90,7 +93,7 @@ class EEIPClient:
             self.__tcpClient_socket.connect((address, port))
             self.__thread = threading.Thread(target=self.__listen, args=())
             self.__thread.start()
-            self.__tcpClient_socket.send(bytearray(__encapsulation.to_bytes()))
+            self.__tcpClient_socket.send(bytearray(data_to_send))
 
             try:
                 while len(self.__receivedata) == 0:
@@ -101,7 +104,6 @@ class EEIPClient:
             self.__session_handle = self.__receivedata[4] | (self.__receivedata[5]) << 8 | (self.__receivedata[6]) << 16 | (self.__receivedata[7]) << 24
 
             return self.__session_handle;
-
 
     def unregister_session(self):
         """
@@ -118,19 +120,7 @@ class EEIPClient:
             self.__tcpClient_socket.close()
         self.__session_handle = 0
 
-    def send_explicit_message(self, service_code, class_id, instance_id, attribute_id, value=None):
-        """
-        Implementation of generic explicit message
-        Specification Vol. 1 Appendix A - Chapter A-4.12 - Page A-20
-        Returns the contents of response message, either requested data or error code
-        :param service_code Service code of the message
-        :param class_id Class id of message
-        :param instance_id Instance of message (0 for class Attributes)
-        :param attribute_id Attribute Id of message
-        :return: Response message recieved,
-                for Get_Attribute_Single or Get_Attribute_All, response is the requested attributes
-                otherwise is some acknowledgement or error code
-        """
+    def construct_explicit_message(self, service_code, class_id, instance_id, attribute_id, value=None):
         service_code = cip.CIPCommonServices(service_code)
 
         # initialize buffer to empty list, but dont use mutable as default
@@ -178,6 +168,24 @@ class EEIPClient:
             common_packet_format.data.append(i)
 
         data_to_write = __encapsulation.to_bytes() + common_packet_format.to_bytes()
+        return data_to_write
+
+    def send_explicit_message(self, service_code, class_id, instance_id, attribute_id, value=None):
+        """
+        Implementation of generic explicit message
+        Specification Vol. 1 Appendix A - Chapter A-4.12 - Page A-20
+        Returns the contents of response message, either requested data or error code
+        :param service_code Service code of the message
+        :param class_id Class id of message
+        :param instance_id Instance of message (0 for class Attributes)
+        :param attribute_id Attribute Id of message
+        :return: Response message recieved,
+                for Get_Attribute_Single or Get_Attribute_All, response is the requested attributes
+                otherwise is some acknowledgement or error code
+        """
+
+        data_to_write = self.construct_explicit_message(service_code, class_id, instance_id, attribute_id, value)
+        
         self.__receivedata = bytearray()
         self.__tcpClient_socket.send(bytearray(data_to_write))
 
@@ -229,8 +237,8 @@ class EEIPClient:
         """
         return self.get_attribute_single(class_id, instance_id, None)
 
-
     def set_attribute_single(self, class_id, instance_id, attribute_id, value):
+
         """
         Implementation of Common Service "Set_Attribute_Single" - Service Code: 0x10
         Modifies an attribute value
@@ -243,15 +251,16 @@ class EEIPClient:
         service_code = cip.CIPCommonServices.SET_ATTRIBUTE_SINGLE
         return self.send_explicit_message(service_code,class_id,instance_id,attribute_id,value)
 
-    def forward_open(self, large_forward_open = False):
+    def construct_forward_open(self, large_forward_open = False):
         """
         The Forward Open Service (Service Code 0x54 and Large_Forward_Open service (Service
         Code 0x5B) are used to establish a Connection with a Target Device.
         The maximum data size for Forward open is 511 bytes, and 65535 for large forward open
-        Two independent Threads are opened to send and receive data via UDP (Implicit Messaging)
+        This method only constructs the packet.
+        The full construct + send is in forward_open()
         :param large_forward_open: Use Service code 0x58 (Large_Forward_Open) if true, otherwise 0x54 (Forward_Open)
         """
-        self.__udp_client_receive_closed = False
+        
         o_t_header_offset = 2
         if (self.__o_t_realtime_format == RealTimeFormat.HEADER32BIT):
             o_t_header_offset = 6
@@ -443,7 +452,20 @@ class EEIPClient:
         __encapsulation.length = len(common_packet_format.to_bytes()) + 6
 
         data_to_write = __encapsulation.to_bytes() + common_packet_format.to_bytes()
+        return data_to_write
 
+    def forward_open(self, large_forward_open = False):
+        """
+        The Forward Open Service (Service Code 0x54 and Large_Forward_Open service (Service
+        Code 0x5B) are used to establish a Connection with a Target Device.
+        The maximum data size for Forward open is 511 bytes, and 65535 for large forward open
+        Two independent Threads are opened to send and receive data via UDP (Implicit Messaging)
+        :param large_forward_open: Use Service code 0x58 (Large_Forward_Open) if true, otherwise 0x54 (Forward_Open)
+        """
+        self.__udp_client_receive_closed = False
+        data_to_write = self.construct_forward_open(large_forward_open=large_forward_open)
+
+        ## Explicit send forward open message
         self.__receivedata = bytearray()
         self.__tcpClient_socket.send(bytearray(data_to_write))
 
@@ -501,10 +523,10 @@ class EEIPClient:
         self.__udp_send_thread.daemon = True
         self.__udp_send_thread.start()
 
-
-    def forward_close(self):
-        """
-        Closes a connection (Service code 0x4E)
+    def construct_forward_close(self):
+        """ 
+        merely construct the forward close message
+        construct + send with forward_close()
         """
         length_offset = 5 + (0 if self.__t_o_connection_type == ConnectionType.NULL else 2) + (0 if self.__o_t_connection_type == ConnectionType.NULL else 2)
 
@@ -597,15 +619,20 @@ class EEIPClient:
         if self.__t_o_connection_type != ConnectionType.NULL:
             common_packet_format.data.append(0x2C)
             common_packet_format.data.append(self.__t_o_instance_id)
+        data_to_write = __encapsulation.to_bytes() + common_packet_format.to_bytes()
+        return data_to_write
+
+    def forward_close(self):
+        """
+        Closes a connection (Service code 0x4E)
+        """
+
         try:
-            data_to_write = __encapsulation.to_bytes() + common_packet_format.to_bytes()
+            data_to_write = self.construct_forward_close()
             self.__receivedata = bytearray()
             self.__tcpClient_socket.send(bytearray(data_to_write))
         except Exception:       #Handle exception to allow to close the connection if closed from the target before
             pass
-
-
-
 
         try:
             while len(self.__receivedata) == 0:
@@ -621,7 +648,6 @@ class EEIPClient:
 
         self.__stoplistening_udp = True
         self.__stoplistening = True
-
         self.__udp_server_socket.close()
 
     def __udp_listen(self):
@@ -654,80 +680,84 @@ class EEIPClient:
 
             self.__receivedata = bytearray()
 
+    def construct_implicit_message(self,sequence_count):
+        message = list()
+        #-------------------Item Count
+        message.append(2)
+        message.append(0)
+        # -------------------Item Count
+
+        # -------------------Type ID
+        message.append(0x02)
+        message.append(0x80)
+        # -------------------Type ID
+
+        # -------------------Length
+        message.append(0x08)
+        message.append(0x00)
+        # -------------------Length
+
+        # -------------------Connection ID
+        message.append(self.__connection_id_o_t & 0xFF)
+        message.append((self.__connection_id_o_t & 0xFF00) >> 8)
+        message.append((self.__connection_id_o_t & 0xFF0000) >> 16)
+        message.append((self.__connection_id_o_t & 0xFF000000) >> 24)
+        # -------------------Connection ID
+
+        # -------------------sequence count
+        message.append(sequence_count & 0xFF)
+        message.append((sequence_count & 0xFF00) >> 8)
+        message.append((sequence_count & 0xFF0000) >> 16)
+        message.append((sequence_count & 0xFF000000) >> 24)
+        # -------------------sequence count
+
+        # -------------------Type ID
+        message.append(0xB1)
+        message.append(0x00)
+        # -------------------Type ID
+
+        header_offset = 0
+        if self.__o_t_realtime_format  == RealTimeFormat.HEADER32BIT:
+            header_offset = 4
+        o_t_length = self.__o_t_length + header_offset + 2
+
+        # -------------------Length
+        message.append(o_t_length & 0xFF)
+        message.append((o_t_length & 0xFF00) >> 8)
+        # -------------------Length
+
+        # -------------------Sequence count
+        if self.__o_t_realtime_format != RealTimeFormat.HEARTBEAT:
+            message.append(sequence_count & 0xFF)
+            message.append((sequence_count & 0xFF00) >> 8)
+        # -------------------Sequence count
+
+        if self.__o_t_realtime_format == RealTimeFormat.HEADER32BIT:
+            message.append(1)
+            message.append(0)
+            message.append(0)
+            message.append(0)
+        # -------------------write data
+        #self.o_t_iodata[0] = self.o_t_iodata[0] + 1
+        for i in range(0, self.__o_t_length):
+            message.append(self.o_t_iodata[i])
+        # -------------------write data
+        return message
+
+
     def __send_udp(self):
         sequence_count = 0
         sequence = 0
         while not self.__stoplistening_udp:
-            message = list()
-
-            #-------------------Item Count
-            message.append(2)
-            message.append(0)
-            # -------------------Item Count
-
-            # -------------------Type ID
-            message.append(0x02)
-            message.append(0x80)
-            # -------------------Type ID
-
-            # -------------------Length
-            message.append(0x08)
-            message.append(0x00)
-            # -------------------Length
-
-            # -------------------Connection ID
-            message.append(self.__connection_id_o_t & 0xFF)
-            message.append((self.__connection_id_o_t & 0xFF00) >> 8)
-            message.append((self.__connection_id_o_t & 0xFF0000) >> 16)
-            message.append((self.__connection_id_o_t & 0xFF000000) >> 24)
-            # -------------------Connection ID
-
-            # -------------------sequence count
-            sequence_count += 1
-            message.append(sequence_count & 0xFF)
-            message.append((sequence_count & 0xFF00) >> 8)
-            message.append((sequence_count & 0xFF0000) >> 16)
-            message.append((sequence_count & 0xFF000000) >> 24)
-            # -------------------sequence count
-
-            # -------------------Type ID
-            message.append(0xB1)
-            message.append(0x00)
-            # -------------------Type ID
-
-            header_offset = 0
-            if self.__o_t_realtime_format  == RealTimeFormat.HEADER32BIT:
-                header_offset = 4
-            o_t_length = self.__o_t_length + header_offset + 2
-
-            # -------------------Length
-            message.append(o_t_length & 0xFF)
-            message.append((o_t_length & 0xFF00) >> 8)
-            # -------------------Length
-
-            # -------------------Sequence count
-            sequence += 1
-            if self.__o_t_realtime_format != RealTimeFormat.HEARTBEAT:
-                message.append(sequence & 0xFF)
-                message.append((sequence & 0xFF00) >> 8)
-            # -------------------Sequence count
-
-            if self.__o_t_realtime_format == RealTimeFormat.HEADER32BIT:
-                message.append(1)
-                message.append(0)
-                message.append(0)
-                message.append(0)
-            # -------------------write data
-            #self.o_t_iodata[0] = self.o_t_iodata[0] + 1
-            for i in range(0, self.__o_t_length):
-                message.append(self.o_t_iodata[i])
-            # -------------------write data
+            sequence_count+=1
+            message = self.construct_implicit_message(sequence_count)    
 
             sock = socket.socket(socket.AF_INET,  # Internet
                                  socket.SOCK_DGRAM)  # UDP
 
             self.__udp_server_socket.sendto(bytearray(message), (self.__ip_address, self.__target_udp_port))
             time.sleep(float(self.__requested_packet_rate_o_t)/1000000.0)
+        return
 
 
     def __listen(self):
