@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eeip"
+version = "1.0.0"
+description = "Ethernet/IP compatible Python Module supporting Explicit and Implicit Messaging.  Forked from Rossman Engineering to add async support"
+readme = "README.md"
+authors = [
+  { name = "Rossmann Engineering"},
+]
+license = { text = "MIT" }
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: System :: Hardware",
+    "Topic :: Scientific/Engineering :: Industrial Automation"
+]
+dependencies = [
+    # Add any specific required packages here if the codebase requires them in the future
+]
+
+[project.urls]
+Homepage = "https://github.com/stormyweathers/eeip.py"
+Repository = "https://github.com/stormyweathers/eeip.py"
+Issues = "https://github.com/stormyweathers/eeip.py/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["eeip*"]
